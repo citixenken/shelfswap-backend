@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -30,38 +34,38 @@ func (app *application) routes() http.Handler {
 		json.NewEncoder(w).Encode(map[string]string{"status": "🚀"})
 	})
 
-	mux.HandleFunc("/contact", app.contactHandler)
+	mux.HandleFunc("/contact", app.corsMiddleware(app.contactHandler))
 
 	// Auth routes
-	mux.HandleFunc("/register", app.registerHandler)
-	mux.HandleFunc("/login", app.loginHandler)
-	mux.HandleFunc("/logout", app.logoutHandler)
-	mux.HandleFunc("/forgot-password", app.forgotPasswordHandler)
-	mux.HandleFunc("/reset-password", app.resetPasswordHandler)
-	mux.HandleFunc("/me", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/register", app.corsMiddleware(app.registerHandler))
+	mux.HandleFunc("/login", app.corsMiddleware(app.loginHandler))
+	mux.HandleFunc("/logout", app.corsMiddleware(app.logoutHandler))
+	mux.HandleFunc("/forgot-password", app.corsMiddleware(app.forgotPasswordHandler))
+	mux.HandleFunc("/reset-password", app.corsMiddleware(app.resetPasswordHandler))
+	mux.HandleFunc("/me", app.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			app.authMiddleware(app.updateProfileHandler)(w, r)
 		} else {
 			app.authMiddleware(app.meHandler)(w, r)
 		}
-	})
-	mux.HandleFunc("/my-books", app.authMiddleware(app.userBooksHandler))
-	mux.HandleFunc("/members", app.authMiddleware(app.listMembersHandler))
-	mux.HandleFunc("/wishlist", app.authMiddleware(app.getWishlistHandler))
+	}))
+	mux.HandleFunc("/my-books", app.corsMiddleware(app.authMiddleware(app.userBooksHandler)))
+	mux.HandleFunc("/members", app.corsMiddleware(app.authMiddleware(app.listMembersHandler)))
+	mux.HandleFunc("/wishlist", app.corsMiddleware(app.authMiddleware(app.getWishlistHandler)))
 
 	// Book routes
-	mux.HandleFunc("/books", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/books", app.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			app.authMiddleware(app.createBookHandler)(w, r)
 		} else {
 			app.listBooksHandler(w, r)
 		}
-	})
-	mux.HandleFunc("/books/top-requested", app.listTopRequestedBooksHandler)
-	mux.HandleFunc("/genres", app.listGenresHandler)
-	mux.HandleFunc("/genres/popular", app.listPopularGenresHandler)
+	}))
+	mux.HandleFunc("/books/top-requested", app.corsMiddleware(app.listTopRequestedBooksHandler))
+	mux.HandleFunc("/genres", app.corsMiddleware(app.listGenresHandler))
+	mux.HandleFunc("/genres/popular", app.corsMiddleware(app.listPopularGenresHandler))
 
-	mux.HandleFunc("/books/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/books/", app.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut || r.Method == http.MethodDelete {
 			app.authMiddleware(app.bookIDHandler)(w, r)
 		} else if len(r.URL.Path) > len("/books/") && r.URL.Path[len(r.URL.Path)-8:] == "/request" {
@@ -73,19 +77,14 @@ func (app *application) routes() http.Handler {
 		} else {
 			app.bookIDHandler(w, r)
 		}
-	})
-	mux.HandleFunc("/upload", app.authMiddleware(app.uploadHandler))
-	mux.HandleFunc("/stats", app.getStatsHandler)
+	}))
+	mux.HandleFunc("/upload", app.corsMiddleware(app.authMiddleware(app.uploadHandler)))
+	mux.HandleFunc("/stats", app.corsMiddleware(app.getStatsHandler))
 
-	// Serve static files
-	// Serve static files (only if using local storage, but for simplicity we remove it as we migrate to cloud)
-	// If using LocalStorage in dev, you might want to keep this or serve via a separate handler.
-	// For this migration, we assume Supabase or we'll add it back if LocalStorage is active.
-	// Actually, let's keep it conditionally or just remove it if we are fully committing to Supabase.
-	// Given the user wants to migrate, let's remove it to force usage of the new system.
-	// But wait, existing images on disk won't be served. That's fine for a migration step.
+	// Apply middleware chain: recovery -> logging -> security headers -> routes
+	handler := recoverMiddleware(loggingMiddleware(securityHeadersMiddleware(mux)))
 
-	return mux
+	return handler
 }
 
 func main() {
@@ -94,18 +93,29 @@ func main() {
 		log.Println("No .env file found, relying on environment variables")
 	}
 
-	// Default DSN, can be overridden by env var in real app
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		log.Fatal("DATABASE_URL environment variable is not set")
+	// Validate required environment variables
+	requiredEnvVars := []string{"DATABASE_URL"}
+	for _, envVar := range requiredEnvVars {
+		if os.Getenv(envVar) == "" {
+			log.Fatalf("%s environment variable is required", envVar)
+		}
 	}
 
+	// Get configuration from environment
+	dsn := os.Getenv("DATABASE_URL")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default port
+	}
+
+	// Connect to database
 	dbConn, err := db.Connect(dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer dbConn.Close()
 
+	// Initialize stores
 	bookStore := store.NewPostgresBookStore(dbConn)
 	if err := bookStore.Migrate(); err != nil {
 		log.Fatal(err)
@@ -116,43 +126,78 @@ func main() {
 		log.Fatal(err)
 	}
 
+	requestStore := store.NewPostgresRequestStore(dbConn)
+
+	// Initialize email service
 	var emailService email.EmailService
 	resendAPIKey := os.Getenv("RESEND_API_KEY")
 	if resendAPIKey != "" {
 		emailService = email.NewResendEmailService(resendAPIKey)
-		log.Println("Using Resend email service")
+		log.Println("✓ Using Resend email service")
 	} else {
 		emailService = email.NewConsoleEmailService()
-		log.Println("Using Console email service (set RESEND_API_KEY to use Resend)")
+		log.Println("⚠ Using Console email service (set RESEND_API_KEY to use Resend)")
 	}
-	requestStore := store.NewPostgresRequestStore(dbConn)
 
+	// Initialize storage service
 	var storageService storage.Service
 	supabaseURL := os.Getenv("SUPABASE_URL")
 	supabaseKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 	if supabaseURL != "" && supabaseKey != "" {
 		storageService = storage.NewSupabaseStorage(supabaseURL, supabaseKey, "uploads")
-		log.Println("Using Supabase storage service")
+		log.Println("✓ Using Supabase storage service")
 	} else {
 		storageService = storage.NewLocalStorage("uploads")
-		log.Println("Using Local storage service")
+		log.Println("⚠ Using Local storage service (set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for cloud storage)")
 	}
 
+	// Create application
 	app := &application{
-		bookStore:    bookStore,
-		userStore:    userStore,
-		requestStore: requestStore,
-		emailService: emailService,
+		bookStore:      bookStore,
+		userStore:      userStore,
+		requestStore:   requestStore,
+		emailService:   emailService,
 		storageService: storageService,
 	}
 
+	// Create server
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + port,
 		Handler: app.routes(),
 	}
 
-	log.Println("Server starting on :8080")
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	// Channel to listen for errors from the server
+	serverErrors := make(chan error, 1)
+
+	// Start the server in a goroutine
+	go func() {
+		log.Printf("🚀 Server starting on port %s", port)
+		serverErrors <- srv.ListenAndServe()
+	}()
+
+	// Channel to listen for interrupt signals
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+
+	// Block until we receive a signal or an error
+	select {
+	case err := <-serverErrors:
+		log.Fatalf("Error starting server: %v", err)
+
+	case sig := <-shutdown:
+		log.Printf("Received signal %v, starting graceful shutdown", sig)
+
+		// Create a context with timeout for shutdown
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Attempt graceful shutdown
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Error during shutdown: %v", err)
+			// Force close after timeout
+			srv.Close()
+		}
+
+		log.Println("Server stopped gracefully")
 	}
 }

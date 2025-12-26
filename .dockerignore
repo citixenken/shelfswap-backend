@@ -1,0 +1,34 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Test files
+*_test.go
+
+# Local uploads (use cloud storage in production)
+uploads/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+main
+
+# Dependencies (will be downloaded during build)
+vendor/
