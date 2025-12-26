@@ -15,7 +15,8 @@ func (app *application) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			"http://localhost:5173",           // Local development
 			"http://localhost:3000",           // Alternative local port
 			"https://*.pages.dev",             // Cloudflare Pages preview
-			"https://shelfswap.io",     // Production Cloudflare Pages (update with your actual domain)
+			"https://shelfswap.io",            // Production custom domain
+			"https://www.shelfswap.io",        // Production custom domain (www)
 		}
 
 		origin := r.Header.Get("Origin")
