@@ -71,11 +71,11 @@ func (s *PostgresUserStore) Migrate() error {
 
 func (s *PostgresUserStore) Create(user User) error {
 	query := `
-		INSERT INTO users (email, password)
-		VALUES ($1, $2)
+		INSERT INTO users (email, password, username, avatar_path)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id, created_at`
 
-	return s.db.QueryRow(query, user.Email, user.Password).Scan(&user.ID, &user.CreatedAt)
+	return s.db.QueryRow(query, user.Email, user.Password, user.Username, user.AvatarPath).Scan(&user.ID, &user.CreatedAt)
 }
 
 func (s *PostgresUserStore) GetByEmail(email string) (User, error) {

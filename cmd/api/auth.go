@@ -160,11 +160,16 @@ func (app *application) getAuthenticatedUserID(r *http.Request) (int, error) {
 		if usr.Username != nil {
 			uName = *usr.Username
 		}
+		uAvatar := ""
+		if usr.ImageURL != nil {
+			uAvatar = *usr.ImageURL
+		}
 
 		newUser := store.User{
-			Email:    email,
-			Password: "clerk_managed_account",
-			Username: uName,
+			Email:      email,
+			Password:   "clerk_managed_account",
+			Username:   uName,
+			AvatarPath: uAvatar,
 		}
 
 		if err := app.userStore.Create(newUser); err != nil {
@@ -181,18 +186,23 @@ func (app *application) getAuthenticatedUserID(r *http.Request) (int, error) {
 			}
 		}
 	} else {
-		// User exists - sync username from Clerk if it has changed
+		// User exists - sync username and avatar from Clerk if it has changed
 		clerkUsername := ""
 		if usr.Username != nil {
 			clerkUsername = *usr.Username
 		}
+		clerkAvatar := ""
+		if usr.ImageURL != nil {
+			clerkAvatar = *usr.ImageURL
+		}
 
-		// Update username if different from what's in Clerk
-		if localUser.Username != clerkUsername {
+		// Update profile if different from what's in Clerk
+		if localUser.Username != clerkUsername || localUser.AvatarPath != clerkAvatar {
 			localUser.Username = clerkUsername
+			localUser.AvatarPath = clerkAvatar
 			if err := app.userStore.Update(localUser); err != nil {
 				// Log error but don't fail auth
-				// The user can still authenticate even if username sync fails
+				log.Printf("Failed to sync user profile: %v", err)
 			}
 		}
 	}
