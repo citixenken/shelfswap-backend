@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -80,6 +81,11 @@ func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	userID := r.Context().Value("userID").(int)
+	user, err := app.userStore.GetByID(userID)
+	if err != nil {
+		// Log error but proceed (book will be created, just response metadata partial)
+		log.Printf("Failed to fetch user constraints for response: %v", err)
+	}
 
 	book := store.Book{
 		Title:       input.Title,
@@ -88,6 +94,10 @@ func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request
 		Genre:       input.Genre,
 		ImagePath:   input.ImagePath,
 		UserID:      userID,
+		// Populate display fields for immediate frontend feedback
+		UserUsername:   user.Username,
+		UserEmail:      user.Email,
+		UserAvatarPath: user.AvatarPath,
 	}
 
 	createdBook, err := app.bookStore.Add(book)
@@ -95,6 +105,11 @@ func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// Ensure the returned book has the user details we populated
+	createdBook.UserUsername = user.Username
+	createdBook.UserEmail = user.Email
+	createdBook.UserAvatarPath = user.AvatarPath
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
