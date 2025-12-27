@@ -29,10 +29,10 @@ type application struct {
 func (app *application) routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", app.corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "🚀"})
-	})
+	}))
 
 	mux.HandleFunc("/contact", app.corsMiddleware(app.contactHandler))
 
