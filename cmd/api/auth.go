@@ -170,6 +170,7 @@ func (app *application) getAuthenticatedUserID(r *http.Request) (int, error) {
 			Password:   "clerk_managed_account",
 			Username:   uName,
 			AvatarPath: uAvatar,
+			ClerkID:    usr.ID,
 		}
 
 		if err := app.userStore.Create(newUser); err != nil {
@@ -179,14 +180,14 @@ func (app *application) getAuthenticatedUserID(r *http.Request) (int, error) {
 				return 0, err
 			}
 		} else {
-			// Re-fetch to get ID (workaround for value receiver issue)
+			// Re-fetch to get ID
 			localUser, err = app.userStore.GetByEmail(email)
 			if err != nil {
 				return 0, err
 			}
 		}
 	} else {
-		// User exists - sync username and avatar from Clerk if it has changed
+		// User exists - sync username, avatar, and clerk_id
 		clerkUsername := ""
 		if usr.Username != nil {
 			clerkUsername = *usr.Username
@@ -196,10 +197,11 @@ func (app *application) getAuthenticatedUserID(r *http.Request) (int, error) {
 			clerkAvatar = *usr.ImageURL
 		}
 
-		// Update profile if different from what's in Clerk
-		if localUser.Username != clerkUsername || localUser.AvatarPath != clerkAvatar {
+		// Update profile if different from what's in Clerk (including backfilling ClerkID)
+		if localUser.Username != clerkUsername || localUser.AvatarPath != clerkAvatar || localUser.ClerkID != usr.ID {
 			localUser.Username = clerkUsername
 			localUser.AvatarPath = clerkAvatar
+			localUser.ClerkID = usr.ID
 			if err := app.userStore.Update(localUser); err != nil {
 				// Log error but don't fail auth
 				log.Printf("Failed to sync user profile: %v", err)
