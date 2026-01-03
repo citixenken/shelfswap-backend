@@ -26,7 +26,7 @@ type UserStore interface {
 	GetResetToken(token string) (int, time.Time, error)
 	DeleteResetToken(token string) error
 	UpdatePassword(userID int, password string) error
-	GetMembers() ([]User, error)
+	GetMembers(searchQuery string) ([]User, error)
 }
 
 type PostgresUserStore struct {

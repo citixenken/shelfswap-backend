@@ -1,12 +1,21 @@
 package store
 
-func (s *PostgresUserStore) GetMembers() ([]User, error) {
+func (s *PostgresUserStore) GetMembers(searchQuery string) ([]User, error) {
 	query := `
 		SELECT id, email, COALESCE(username, ''), COALESCE(bio, ''), COALESCE(avatar_path, ''), COALESCE(location, ''), created_at
-		FROM users
-		ORDER BY created_at DESC`
+		FROM users`
 
-	rows, err := s.db.Query(query)
+	var args []interface{}
+
+	// Add WHERE clause if search query is provided
+	if searchQuery != "" {
+		query += ` WHERE username ILIKE $1`
+		args = append(args, "%"+searchQuery+"%")
+	}
+
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

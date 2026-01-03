@@ -6,7 +6,9 @@ import (
 )
 
 func (app *application) listMembersHandler(w http.ResponseWriter, r *http.Request) {
-	members, err := app.userStore.GetMembers()
+	searchQuery := r.URL.Query().Get("search")
+
+	members, err := app.userStore.GetMembers(searchQuery)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
